@@ -1,0 +1,15 @@
+.env
+.claude/settings.local.json
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.db
+logs/*.jsonl
+eval/out/
+.pytest_cache/
+.terraform/
+*.tfstate
+*.tfstate.backup
+.DS_Store
+aws/deploy/dist/

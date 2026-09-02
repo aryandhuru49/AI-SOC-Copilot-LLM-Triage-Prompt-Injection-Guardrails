@@ -1,0 +1,7 @@
+# Deliberately outdated, CVE-laden pins — a Trivy scan target (Part B Tier 1).
+# Mirrors the RUN pip install line in Dockerfile.vulnerable. Not installed anywhere.
+requests==2.19.1
+urllib3==1.24.1
+pyyaml==5.1
+jinja2==2.10
+cryptography==2.3

@@ -1,0 +1,28 @@
+# Checkov config for the SOC Copilot deployment stack.
+# Findings below are ACCEPTED with justification — every one either costs money
+# (violating the project's hard $0 constraint) or adds operational weight that
+# isn't warranted for a portfolio demo. The rest were fixed in main.tf.
+#
+# Run:  checkov -d aws/deploy   (or: python -m checkov.main -d aws/deploy)
+
+compact: true
+skip-check:
+  # --- would break the $0 constraint ---
+  - CKV_AWS_117  # Lambda in VPC -> needs NAT Gateway (~$32/mo). Functions only egress to
+                 # AWS APIs + api.anthropic.com; acceptable over public networking.
+  - CKV_AWS_119  # DynamoDB CMK -> customer KMS key ($1/mo). Table uses AWS-owned encryption.
+  - CKV_AWS_136  # ECR CMK -> KMS key cost. Repo uses default AES256 at rest.
+  - CKV_AWS_158  # CloudWatch Logs CMK -> KMS key cost. Logs use default encryption.
+  - CKV_AWS_173  # Lambda env-var CMK -> KMS key cost. No secrets in env; API key lives in
+                 # SSM SecureString (AWS-managed key).
+  - CKV_AWS_337  # SSM SecureString CMK -> KMS key cost. AWS-managed key is sufficient here.
+
+  # --- deliberate design choices for a short-lived demo stack ---
+  - CKV_AWS_338  # Log retention >= 1yr -> we set 3 days on purpose to minimise storage.
+  - CKV_AWS_51   # ECR immutable tags -> we repeatedly push :latest during iteration.
+  - CKV_AWS_272  # Lambda code signing -> disproportionate for a single-maintainer project.
+  - CKV_AWS_116  # Lambda DLQ -> no downstream consumer; failures surface in CloudWatch.
+  - CKV_AWS_115  # Lambda reserved concurrency -> this AWS account's total concurrency
+                 # limit is <=10, so AWS rejects any reservation (must keep >=10 unreserved).
+                 # Cost is bounded by the $1 budget alarm instead.
+  - CKV_AWS_28   # DynamoDB PITR -> per-GB cost; data is disposable synthetic/audit records.
