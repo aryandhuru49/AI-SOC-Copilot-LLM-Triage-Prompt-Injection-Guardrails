@@ -152,6 +152,20 @@ python -m containers.scan              # Trivy → alerts     (trivy on PATH)
 streamlit run app.py
 ```
 
+### Dashboard
+
+`streamlit run app.py` opens a 5-tab console:
+
+| Tab | What it does |
+|---|---|
+| **Alert queue** | triage a batch of synthetic alerts, guardrails on/off |
+| **Injection playground** | pick any of the 15 payloads, watch it get flagged and the severity held |
+| **IaC / container scan** | run Checkov/Trivy live, triage the first findings |
+| **Eval results** | the ladder + per-technique charts and the results CSV |
+| **Deployed (AWS)** | live scan of the `soc-copilot-alerts` DynamoDB table from the deployed stack |
+
+> Add screenshots to `docs/` and link them here.
+
 ### Deploy to AWS ($0, free-tier only)
 
 Prereqs: an AWS account, a dedicated IAM user in an isolated CLI profile
@@ -176,8 +190,12 @@ terraform -chdir=aws/deploy destroy                                  # tear it a
   boundary. Novel phrasings will pass it and rely on the guard classifier.
 - **Attacks target severity downgrade and prompt exfiltration.** A model with more output
   latitude (free-text summaries, tool-argument injection) would be a harder test.
-- **CloudTrail ingest** is deployed and unit-tested but has only been exercised on
-  synthetic events end-to-end.
+- **CloudTrail ingest** is deployed and verified against real CloudTrail data (it
+  correctly scans and filters live account events on its hourly schedule), but it has
+  not yet dispatched a live alert end-to-end — no security-relevant event
+  (`CreateUser`, `ConsoleLogin`, `AuthorizeSecurityGroupIngress`, …) has occurred in an
+  ingest window during testing. The write-to-DynamoDB and triage-dispatch path it uses
+  is the same one covered by the triage-Lambda tests.
 
 ---
 
