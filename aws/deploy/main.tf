@@ -192,6 +192,11 @@ resource "aws_lambda_function" "ingest" {
 resource "aws_cloudwatch_event_rule" "hourly" {
   name                = "${local.name}-hourly-ingest"
   schedule_expression = "rate(1 hour)"
+  # Kept DISABLED on purpose: the pipeline runs only on manual invocation.
+  # To resume the hourly CloudTrail ingest, set state = "ENABLED" (or run
+  #   aws events enable-rule --name soc-copilot-hourly-ingest --profile soc-copilot
+  # ) and `terraform apply`.
+  state = "DISABLED"
 }
 
 resource "aws_cloudwatch_event_target" "hourly" {

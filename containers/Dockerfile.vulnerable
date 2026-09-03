@@ -1,11 +1,10 @@
 # Static-scan target for Trivy (Part B Tier 1). Old base image => known CVEs.
-# Build is optional; `trivy image` or `trivy config` can scan without running it.
 FROM python:3.9-slim-buster
 
 # Deliberately pinned-old, vulnerable packages
 RUN pip install --no-cache-dir "requests==2.19.1" "urllib3==1.24.1" "pyyaml==5.1"
 
-# Bad practice: runs as root, secret in env
+# secret in env
 ENV API_TOKEN="sk-demo-hardcoded-secret-do-not-use"
 COPY . /app
 WORKDIR /app

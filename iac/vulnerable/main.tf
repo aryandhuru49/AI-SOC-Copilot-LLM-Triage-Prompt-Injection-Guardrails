@@ -1,6 +1,5 @@
 # Intentionally vulnerable Terraform — a static-scan target ONLY.
 # Do NOT `terraform apply` this. Checkov / tfsec / Trivy read it as text.
-# Part B Tier 1. See iac/scan.py.
 
 resource "aws_s3_bucket" "public_data" {
   bucket = "soc-copilot-demo-public-bucket"
