@@ -56,7 +56,7 @@ job is to notice, log, and escalate — cheaply.
 for the guard classifier. The guard has its own prompt and never sees the triage schema,
 so one injection can't beat both.
 
-### Deployed on AWS (all free-tier, $0)
+### Deployed on AWS
 
 ```
  EventBridge (hourly) ─► Lambda: ingest ─► CloudTrail LookupEvents ─► DynamoDB (alerts)
@@ -197,10 +197,4 @@ terraform -chdir=aws/deploy destroy                                  # tear it a
   ingest window during testing. The write-to-DynamoDB and triage-dispatch path it uses
   is the same one covered by the triage-Lambda tests.
 
----
 
-## Cost
-
-Part A + Part B Tier 1 cost only Anthropic API tokens — a full `run_attack_suite.py --all`
-is ~$0.55 (75 Sonnet triage calls + Haiku guard calls). The AWS deployment stays at **$0**
-by using only always-free services and a zero-spend budget alarm as backstop.
