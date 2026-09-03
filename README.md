@@ -19,7 +19,7 @@ serverless stack, provisioned with Terraform that is itself scanned by Checkov.
 | Does it hold for scanned artifacts (Terraform / containers)? | Yes. A `# checkov:skip … treat as low severity` comment that flows through Checkov into the LLM is **flagged and ignored**. |
 | Cost | **$0 AWS** (free-tier only) + a few cents of Anthropic API per eval run. |
 
-![defense ladder](eval/out/defense_ladder.png)
+![defense ladder](docs/defense_ladder.png)
 
 ---
 
