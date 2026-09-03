@@ -116,21 +116,89 @@ Both misses are `network_intrusion` rated medium-vs-high — a genuine analyst j
 
 ---
 
-## Repo layout
+## Repository layout
 
-| Path | Purpose |
-|---|---|
-| `pipeline/` | `schemas.py` (Pydantic), `prompts.py` (naive + hardened, isolated), `triage.py` |
-| `defense/` | `config.py` (layer toggles + ladder), `input_filter.py` (regex), `guard_classifier.py` (LLM) |
-| `data/synthetic_alerts.py` | deterministic network / malware / auth-anomaly alerts with ground truth |
-| `attacks/` | `payloads.py` (15 payloads), `harness.py` (run ladder, score) |
-| `eval/` | `scorer.py` (ladder + clean accuracy), `report.py` (charts) → `eval/out/` |
-| `iac/` | vulnerable Terraform + `scan.py` (Checkov → alerts) |
-| `containers/` | vulnerable Dockerfile + deps + `scan.py` (Trivy → alerts) |
-| `aws/deploy/` | Terraform for the serverless stack + `build_lambda.ps1`, `deploy.ps1` |
-| `aws/lambda/` | `handler_triage.py`, `handler_ingest.py` (reuse `pipeline/`+`defense/` verbatim) |
-| `app.py` | Streamlit dashboard (queue · injection playground · IaC scan · eval · live AWS) |
-| `run_attack_suite.py` | CLI: run the full ladder, write CSV + charts |
+```
+.
+├── pipeline/                   Core triage engine — imported verbatim by the AWS Lambdas
+│   ├── schemas.py              Pydantic models: SocAlert (input) + TriageResult (output);
+│   │                           triage_tool_schema() builds the strict tool-use JSON schema
+│   ├── prompts.py              Two isolated system prompts (NAIVE vs HARDENED) + user-message
+│   │                           framing; the eval ladder swaps between them
+│   └── triage.py               triage_alert(alert, config) — the heart of the project: runs
+│                               the guardrails, calls Claude Sonnet 5 with forced tool use,
+│                               validates, fails safe on refusal, writes the audit log
+│
+├── defense/                    The four guardrail layers
+│   ├── config.py               DefenseConfig dataclass (4 on/off toggles) + LADDER (5 rungs)
+│   ├── input_filter.py         Layer 3 — ~20 regex patterns + a base64 decode-and-check;
+│   │                           no LLM call, runs in microseconds
+│   └── guard_classifier.py     Layer 4 — a separate Claude Haiku call with its own prompt;
+│                               answers only "does this text contain instructions for an AI?"
+│
+├── data/
+│   └── synthetic_alerts.py     Deterministic (seeded) generator: network-intrusion, malware,
+│                               and auth-anomaly alerts, each with a ground-truth severity
+│
+├── attacks/                    The red team
+│   ├── payloads.py             15 injection payloads (11 generic + 4 IaC/container-specific)
+│   │                           and inject() — plants a payload inside an alert field
+│   └── harness.py              run_attack_suite() / run_ladder() + scoring; an attack
+│                               "succeeds" only if it downgrades a critical alert or leaks
+│                               the system prompt
+│
+├── eval/
+│   ├── scorer.py               score_clean() (triage accuracy + false-flag rate) and
+│   │                           run_ladder_df() (the full 5×15 run as a DataFrame)
+│   └── report.py               matplotlib charts → eval/out/*.png (committed copies in docs/)
+│
+├── iac/                        Part B — Terraform security
+│   ├── vulnerable/main.tf      Deliberately misconfigured Terraform (public S3, 0.0.0.0/0 SSH,
+│   │                           unencrypted + public RDS, hardcoded password); never applied
+│   └── scan.py                 Runs Checkov, normalizes each finding into a SocAlert
+│
+├── containers/                 Part B — container / dependency security
+│   ├── Dockerfile.vulnerable   Old base image, runs as root, secret in ENV — a scan target
+│   ├── vuln-app/
+│   │   └── requirements.txt    Pinned-old packages with known CVEs — a scan target
+│   └── scan.py                 Runs Trivy (fs + config), normalizes findings into SocAlerts
+│
+├── aws/                        The serverless deployment
+│   ├── cloudtrail_ingest.py    Local/CLI version of the CloudTrail → alerts ingester
+│   ├── lambda/
+│   │   ├── handler_triage.py   Lambda entry point: pulls the API key from SSM at cold start,
+│   │   │                       triages the alert(s), writes to DynamoDB, publishes to SNS
+│   │   ├── handler_ingest.py   Lambda entry point: pulls the last hour of CloudTrail
+│   │   │                       management events, turns interesting ones into alerts,
+│   │   │                       async-invokes the triage Lambda
+│   │   └── requirements.txt    Lambda-only deps (boto3 is already in the runtime)
+│   └── deploy/
+│       ├── versions.tf         Provider pin + the isolated `soc-copilot` CLI profile
+│       ├── variables.tf        Region, model IDs, API key (via TF_VAR_), optional alert email
+│       ├── main.tf             All 14 resources: 2 Lambdas, DynamoDB, SNS, EventBridge
+│       │                       (DISABLED — manual-only), Function URL, SSM SecureString,
+│       │                       least-privilege IAM exec role, log groups
+│       ├── outputs.tf          Function URL, table name, topic ARN
+│       ├── .checkov.yaml       Skip-list with a written justification for every accepted
+│       │                       finding — makes `checkov -d aws/deploy` run clean
+│       ├── build_lambda.ps1    pip install Linux wheels → copy app code → zip
+│       └── deploy.ps1          Build zip → terraform init → terraform apply
+│
+├── app.py                      Streamlit dashboard — 5 tabs (alert queue, injection
+│                               playground, IaC/container scan, eval charts, live DynamoDB)
+├── run_attack_suite.py         CLI: run the full ladder, write the results CSV + charts
+├── scripts/
+│   └── run_once.py             Smoke test — generate one alert, triage it, print the result
+├── tests/                      Offline pytest (no API key needed)
+│   ├── test_defense.py         Regex-filter behaviour: catches known payloads, no false hits
+│   └── test_schemas.py         Pydantic round-trips + strict-schema field hiding
+│
+├── docs/                       Charts rendered by the eval, shown in this README
+├── logs/                       audit_log.jsonl is written here at runtime (git-ignored)
+├── requirements.txt            Local dev dependencies
+├── .env.example                Copy to .env, add ANTHROPIC_API_KEY
+└── soc-copilot-security-project-brief.md   The original design brief this was built from
+```
 
 ---
 
@@ -170,7 +238,8 @@ streamlit run app.py
 
 Prereqs: an AWS account, a dedicated IAM user in an isolated CLI profile
 (`--profile soc-copilot`), a zero-spend budget alarm, Terraform, Python 3.12.
-Details and guardrails in [`aws/README.md`](aws/README.md).
+Put `ANTHROPIC_API_KEY` in `.env`; `deploy.ps1` reads it and passes it to Terraform
+as `TF_VAR_anthropic_api_key` (stored in AWS as an SSM SecureString).
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\aws\deploy\deploy.ps1     # build zip → terraform apply
