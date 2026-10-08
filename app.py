@@ -177,8 +177,10 @@ with tab_iac:
           "the weaknesses in it. This page shows that the same AI can triage scanner results, "
           "not only monitoring alerts. Choose a file below and open the box to read what "
           "will be scanned, then click the button. The scanner lists the problems it finds "
-          "in that file, and each problem is sent through the same AI triage. The files are "
-          "deliberately insecure samples written for this demo; nothing here is deployed.")
+          "in that file, and each problem is sent through the same AI triage. The table shows "
+          "the AI's severity and first recommended step; open a row under it to read the "
+          "AI's full explanation. The files are deliberately insecure samples written for "
+          "this demo; nothing here is deployed.")
     source_label = st.radio("File to scan", list(SCAN_SOURCES), horizontal=True)
     source = SCAN_SOURCES[source_label]
     st.caption(source["blurb"])
@@ -191,13 +193,17 @@ with tab_iac:
             st.error(f"Scanner not available: {e}")
             findings = []
         st.write(f"**{len(findings)} findings** in `{source['path']}`. Triaging the first 5:")
-        rows = []
-        for a in findings[:5]:
-            r = triage_alert(a, config=FULL)
-            rows.append({"id": a.alert_id, "type": a.alert_type, "severity": r.severity,
-                         "finding": a.description[:90]})
-        if rows:
-            st.dataframe(pd.DataFrame(rows), width="stretch")
+        results = [(a, triage_alert(a, config=FULL)) for a in findings[:5]]
+        if results:
+            st.dataframe(pd.DataFrame([{
+                "id": a.alert_id, "type": a.alert_type, "severity": r.severity,
+                "finding": a.description[:90], "action": r.recommended_action[:80],
+            } for a, r in results]), width="stretch")
+            st.write("**What the AI said about each finding** (open a row to read it)")
+            for a, r in results:
+                with st.expander(f"{a.alert_id}: {r.severity.upper()}. {a.description[:70]}"):
+                    st.write("**Summary:**", r.summary)
+                    st.write("**Recommended action:**", r.recommended_action)
 
 # --------------------------------------------------------------------------
 with tab_results:
