@@ -61,6 +61,14 @@ def about(text: str) -> None:
     st.info(text)
 
 
+def finding_title(alert) -> str:
+    """The one-line headline of a scanner finding, without the code and long description."""
+    text = alert.description.split(" Code:")[0].split(" — ")[0]
+    if alert.alert_type == "container_cve" and "). " in text:
+        text = text.split("). ")[0] + ")"
+    return text
+
+
 def run_scan(scanner: str) -> list:
     """Run one scanner and turn its findings into alerts for the triage pipeline."""
     if scanner == "checkov":
@@ -176,25 +184,54 @@ with tab_iac:
     about("**What this page is for:** security scanners are tools that read a file and list "
           "the weaknesses in it. This page shows that the same AI can triage scanner results, "
           "not only monitoring alerts. Choose a file below and open the box to read what "
-          "will be scanned, then click the button. The scanner lists the problems it finds "
-          "in that file, and each problem is sent through the same AI triage. The small table "
-          "is an overview; below it, each finding is shown in full next to the AI's "
-          "recommended action. The files are deliberately insecure samples written for "
+          "will be scanned, then click *Scan file* to list every problem the scanner finds "
+          "(no AI is used for this step). Next, pick which findings to send to the AI. Each "
+          "one goes through the same triage and comes back with a severity and a recommended "
+          "action, shown in full. The files are deliberately insecure samples written for "
           "this demo; nothing here is deployed.")
     source_label = st.radio("File to scan", list(SCAN_SOURCES), horizontal=True)
     source = SCAN_SOURCES[source_label]
     st.caption(source["blurb"])
     with st.expander(f"The file being scanned: {source['path']}"):
         st.code((ROOT / source["path"]).read_text(encoding="utf-8"), language=source["lang"])
-    if st.button("Scan + triage first 5 findings", type="primary"):
+
+    # Step 1: scan only. Free and local; no AI involved.
+    if st.button("Scan file", type="primary"):
+        st.session_state.pop("scan_results", None)
         try:
-            findings = run_scan(source["scanner"])
+            st.session_state["scan"] = {"source": source_label,
+                                        "findings": run_scan(source["scanner"])}
         except Exception as e:
+            st.session_state.pop("scan", None)
             st.error(f"Scanner not available: {e}")
-            findings = []
-        st.write(f"**{len(findings)} findings** in `{source['path']}`. Triaging the first 5:")
-        results = [(a, triage_alert(a, config=FULL)) for a in findings[:5]]
-        if results:
+
+    scan = st.session_state.get("scan")
+    if scan and scan["source"] == source_label:
+        findings = scan["findings"]
+        st.write(f"**{len(findings)} findings** in `{source['path']}`, in the order the "
+                 "scanner listed them. No AI has looked at these yet.")
+        st.dataframe(pd.DataFrame([{"id": a.alert_id, "finding": finding_title(a)}
+                                   for a in findings]), width="stretch")
+
+        # Step 2: choose what to send to the AI. Each one costs time and money.
+        st.write("**Choose findings to send to the AI** (about 10 seconds each, up to 10). "
+                 "The default is just the first 5 in the list above. The scanner does not "
+                 "rank findings by risk, so that default is arbitrary: change it to triage "
+                 "the ones you care about.")
+        chosen = st.multiselect("Findings to triage", [a.alert_id for a in findings],
+                                default=[a.alert_id for a in findings[:5]],
+                                max_selections=10, key=f"pick_{source_label}")
+        if st.button("Triage selected findings", type="primary", disabled=not chosen):
+            by_id = {a.alert_id: a for a in findings}
+            with st.spinner(f"Triaging {len(chosen)} findings..."):
+                st.session_state["scan_results"] = {
+                    "source": source_label,
+                    "results": [(by_id[i], triage_alert(by_id[i], config=FULL))
+                                for i in chosen]}
+
+        shown = st.session_state.get("scan_results")
+        if shown and shown["source"] == source_label:
+            results = shown["results"]
             st.dataframe(pd.DataFrame([{
                 "id": a.alert_id, "type": a.alert_type, "severity": r.severity,
                 "confidence": r.confidence,
