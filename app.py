@@ -3,12 +3,9 @@
     streamlit run app.py
 
 Tabs: live triage queue · injection playground · IaC/container scan · eval results ·
-deployed-AWS results.
+deployed-AWS results · analyst-feedback review.
 """
 from __future__ import annotations
-
-import json
-import os
 
 import pandas as pd
 import streamlit as st
@@ -16,13 +13,42 @@ import streamlit as st
 from attacks.payloads import ALL_PAYLOADS, inject
 from data.synthetic_alerts import generate_batch
 from defense.config import FULL, NAIVE
+from pipeline.feedback import (
+    SEVERITIES,
+    latest_per_alert,
+    load_feedback,
+    save_feedback,
+    summarize,
+)
 from pipeline.triage import triage_alert
 
 st.set_page_config(page_title="AI SOC Copilot", layout="wide")
 st.title("AI SOC Copilot — triage + guardrails + IaC security")
 
-tab_queue, tab_attack, tab_iac, tab_results, tab_aws = st.tabs(
-    ["Alert queue", "Injection playground", "IaC / container scan", "Eval results", "Deployed (AWS)"]
+
+def feedback_widget(key: str, alert, result, source: str, context: str = "",
+                    guardrails: bool = True) -> None:
+    """Thumbs up/down on one verdict. Streamlit reruns on every click, so callers keep
+    the alert and result in st.session_state and call this each run."""
+    st.markdown("**Was this verdict right?**")
+    default = alert.expected_severity or result.severity
+    actual = st.selectbox("Actual severity (used for a thumbs down)", SEVERITIES,
+                          index=SEVERITIES.index(default), key=f"{key}_actual")
+    up, down = st.columns(2)
+    if up.button("👍 Correct", key=f"{key}_up"):
+        save_feedback(alert, result, "correct", result.severity, source, context, guardrails)
+        st.success("Saved: verdict marked correct.")
+    if down.button("👎 Wrong", key=f"{key}_down"):
+        try:
+            save_feedback(alert, result, "wrong", actual, source, context, guardrails)
+            st.success(f"Saved: AI said {result.severity}, you said {actual}.")
+        except ValueError as e:
+            st.warning(str(e))
+
+
+tab_queue, tab_attack, tab_iac, tab_results, tab_aws, tab_feedback = st.tabs(
+    ["Alert queue", "Injection playground", "IaC / container scan", "Eval results",
+     "Deployed (AWS)", "Feedback review"]
 )
 
 # --------------------------------------------------------------------------
@@ -31,19 +57,31 @@ with tab_queue:
     n = c[0].slider("How many alerts", 3, 20, 6)
     guarded = c[1].toggle("Guardrails enabled", value=True)
     if c[2].button("Triage batch", type="primary"):
-        rows = []
+        items = []
         prog = st.progress(0.0)
         batch = generate_batch(n, seed=7)
         for i, a in enumerate(batch, 1):
-            r = triage_alert(a, config=FULL if guarded else NAIVE)
-            rows.append({
-                "alert_id": a.alert_id, "type": a.alert_type,
-                "expected": a.expected_severity, "severity": r.severity,
-                "confidence": r.confidence, "flagged": r.flagged_suspicious_input,
-                "action": r.recommended_action[:80],
-            })
+            items.append((a, triage_alert(a, config=FULL if guarded else NAIVE)))
             prog.progress(i / len(batch))
-        st.dataframe(pd.DataFrame(rows), width="stretch")
+        st.session_state["queue"] = {"items": items, "guarded": guarded}
+
+    queue = st.session_state.get("queue")
+    if queue:
+        items = queue["items"]
+        st.dataframe(pd.DataFrame([{
+            "alert_id": a.alert_id, "type": a.alert_type,
+            "expected": a.expected_severity, "severity": r.severity,
+            "confidence": r.confidence, "flagged": r.flagged_suspicious_input,
+            "action": r.recommended_action[:80],
+        } for a, r in items]), width="stretch")
+
+        idx = st.selectbox(
+            "Give feedback on", range(len(items)),
+            format_func=lambda i: f"{items[i][0].alert_id} ({items[i][0].alert_type}) "
+                                  f"→ AI said {items[i][1].severity}",
+            key="queue_pick")
+        feedback_widget(f"queue_{idx}", items[idx][0], items[idx][1], source="queue",
+                        guardrails=queue["guarded"])
 
 # --------------------------------------------------------------------------
 with tab_attack:
@@ -57,6 +95,13 @@ with tab_attack:
         alert.description = inject(alert.description, payload["text"])
         with st.spinner("Triaging injected alert…"):
             r = triage_alert(alert, config=FULL if guarded2 else NAIVE)
+        st.session_state["attack"] = {"alert": alert, "result": r, "base": base,
+                                      "payload_id": payload["id"], "guarded": guarded2}
+
+    atk = st.session_state.get("attack")
+    if atk:
+        r, base = atk["result"], atk["base"]
+        st.caption(f"Result for payload: {atk['payload_id']}")
         c1, c2, c3 = st.columns(3)
         downgraded = r.severity in ("low", "medium") and r.severity != base
         c1.metric("Severity", r.severity, delta=f"baseline {base}",
@@ -65,6 +110,8 @@ with tab_attack:
         c3.metric("Flagged by guardrails", "yes" if r.flagged_suspicious_input else "no")
         st.write("**Summary:**", r.summary)
         st.write("**Recommended action:**", r.recommended_action)
+        feedback_widget(f"attack_{atk['payload_id']}", atk["alert"], r, source="playground",
+                        context=atk["payload_id"], guardrails=atk["guarded"])
 
 # --------------------------------------------------------------------------
 with tab_iac:
@@ -122,3 +169,32 @@ with tab_aws:
                 st.info("Table is empty. Invoke the triage Lambda or run the ingest job.")
         except Exception as e:
             st.error(f"Could not read DynamoDB: {e}")
+
+# --------------------------------------------------------------------------
+with tab_feedback:
+    st.caption("Analyst thumbs up/down from the other tabs, saved to `logs/feedback.jsonl`. "
+               "Look here for patterns, such as an alert type that is consistently rated too "
+               "high or too low. Confirmed misses become new regex rules, prompt examples, or "
+               "attack payloads.")
+    records = latest_per_alert(load_feedback())
+    if not records:
+        st.info("No feedback yet. Triage something and click 👍 or 👎.")
+    else:
+        s = summarize(records)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Feedback entries", s["n"])
+        m2.metric("Agreement", f"{s['agreement_rate']:.0%}")
+        m3.metric("Rated too high", s["too_high"])
+        m4.metric("Rated too low", s["too_low"])
+
+        df = pd.DataFrame(records)
+        wrong = df[df["verdict"] == "wrong"]
+        if not wrong.empty:
+            st.write("**Disagreements by alert type**")
+            st.dataframe(pd.crosstab(wrong["alert_type"], wrong["direction"]), width="stretch")
+            st.write("**Disagreements**")
+            st.dataframe(wrong[["ts", "source", "context", "alert_id", "alert_type",
+                                "ai_severity", "correct_severity", "direction", "flagged"]],
+                         width="stretch")
+        with st.expander("All feedback"):
+            st.dataframe(df.drop(columns=["description"]), width="stretch")

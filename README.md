@@ -125,9 +125,11 @@ Both misses are `network_intrusion` rated medium-vs-high — a genuine analyst j
 │   │                           triage_tool_schema() builds the strict tool-use JSON schema
 │   ├── prompts.py              Two isolated system prompts (NAIVE vs HARDENED) + user-message
 │   │                           framing; the eval ladder swaps between them
-│   └── triage.py               triage_alert(alert, config) — the heart of the project: runs
-│                               the guardrails, calls Claude Sonnet 5 with forced tool use,
-│                               validates, fails safe on refusal, writes the audit log
+│   ├── triage.py               triage_alert(alert, config) — the heart of the project: runs
+│   │                           the guardrails, calls Claude Sonnet 5 with forced tool use,
+│   │                           validates, fails safe on refusal, writes the audit log
+│   └── feedback.py             Analyst thumbs up/down on a verdict → logs/feedback.jsonl, plus
+│                               helpers to find patterns (rated too high / too low)
 │
 ├── defense/                    The four guardrail layers
 │   ├── config.py               DefenseConfig dataclass (4 on/off toggles) + LADDER (5 rungs)
@@ -184,14 +186,15 @@ Both misses are `network_intrusion` rated medium-vs-high — a genuine analyst j
 │       ├── build_lambda.ps1    pip install Linux wheels → copy app code → zip
 │       └── deploy.ps1          Build zip → terraform init → terraform apply
 │
-├── app.py                      Streamlit dashboard — 5 tabs (alert queue, injection
+├── app.py                      Streamlit dashboard — 6 tabs (alert queue, injection
 │                               playground, IaC/container scan, eval charts, live DynamoDB)
 ├── run_attack_suite.py         CLI: run the full ladder, write the results CSV + charts
 ├── scripts/
 │   └── run_once.py             Smoke test — generate one alert, triage it, print the result
 ├── tests/                      Offline pytest (no API key needed)
 │   ├── test_defense.py         Regex-filter behaviour: catches known payloads, no false hits
-│   └── test_schemas.py         Pydantic round-trips + strict-schema field hiding
+│   ├── test_schemas.py         Pydantic round-trips + strict-schema field hiding
+│   └── test_feedback.py        Feedback storage: verdicts, direction, dedup, summary
 │
 ├── docs/                       Charts rendered by the eval, shown in this README
 ├── logs/                       audit_log.jsonl is written here at runtime (git-ignored)
@@ -222,7 +225,7 @@ streamlit run app.py
 
 ### Dashboard
 
-`streamlit run app.py` opens a 5-tab console:
+`streamlit run app.py` opens a 6-tab console:
 
 | Tab | What it does |
 |---|---|
@@ -231,6 +234,7 @@ streamlit run app.py
 | **IaC / container scan** | run Checkov/Trivy live, triage the first findings |
 | **Eval results** | the ladder + per-technique charts and the results CSV |
 | **Deployed (AWS)** | live scan of the `soc-copilot-alerts` DynamoDB table from the deployed stack |
+| **Feedback review** | analyst 👍/👎 on verdicts (from the queue and playground tabs), saved to `logs/feedback.jsonl`; shows agreement rate and which alert types are rated too high or too low |
 
 > Add screenshots to `docs/` and link them here.
 
@@ -257,6 +261,9 @@ terraform -chdir=aws/deploy destroy                                  # tear it a
   that failure mode (and a non-LLM ML classifier alternative) is future work.
 - **The regex filter is high-recall on known patterns by design** — a tripwire, not a
   boundary. Novel phrasings will pass it and rely on the guard classifier.
+- **Feedback is captured, not yet acted on.** The dashboard records analyst 👍/👎 and
+  shows which alert types are rated too high or too low, but turning confirmed misses into
+  new regex rules, prompt examples, and regression payloads is still a manual review step.
 - **Attacks target severity downgrade and prompt exfiltration.** A model with more output
   latitude (free-text summaries, tool-argument injection) would be a harder test.
 - **CloudTrail ingest** is deployed and verified against real CloudTrail data (it
