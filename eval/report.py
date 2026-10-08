@@ -83,7 +83,8 @@ def per_technique_chart(df: pd.DataFrame, out_path: str | None = None) -> Path:
     ax = pivot.plot(kind="barh", figsize=(8, 6), color=["#f39c12", "#27ae60"])
     ax.set_xlabel("Injection attempts detected (%)")
     ax.set_xlim(0, 105)
-    ax.legend(["regex filter only", "filter + guard classifier"])
+    ax.legend(["regex filter only", "filter + guard classifier"], loc="upper center",
+              bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False)
     ax.set_title("Injection detection by technique")
     ax.figure.tight_layout()
     ax.figure.savefig(out, dpi=150)
